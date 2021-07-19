@@ -1,4 +1,37 @@
 ---
+- name: Find out whether to set repo_gpgcheck or not
+  set_fact:
+    do_zypper_repo_gpgcheck: >-
+      {{ datadog_zypper_repo_gpgcheck if datadog_zypper_repo_gpgcheck != '' else (
+        'yes' if datadog_zypper_repo == '' and datadog_agent_major_version|int != 5 else 'no'
+      ) }}
+
+- block:  # Work around due to SNI check for SLES11
+  - name: Stat if current RPM key already exists
+    stat:
+      path: /tmp/DATADOG_RPM_KEY_CURRENT.public
+    register: ddkeycurrent
+  - name: Download current RPM key (SLES11)
+    get_url:
+      url: "{{ datadog_zypper_gpgkey_current }}"
+      dest: /tmp/DATADOG_RPM_KEY_CURRENT.public
+      force: yes
+    when: not ddkeycurrent.stat.exists
+  when: ansible_distribution_version|int == 11
+
+- name: Download current RPM key
+  get_url:
+    url: "{{ datadog_zypper_gpgkey_current }}"
+    dest: /tmp/DATADOG_RPM_KEY_CURRENT.public
+    force: yes
+  when: ansible_distribution_version|int >= 12
+
+- name: Import current RPM key
+  rpm_key:
+    key: /tmp/DATADOG_RPM_KEY_CURRENT.public
+    state: present
+  when: not ansible_check_mode
+
 # Do not import old key if installing Agent 7, as all Agent 7 packages are signed with the new key
 - block:  # Work around due to SNI check for SLES11
   - name: Stat if RPM key already exists
@@ -83,6 +116,7 @@
     dest: /etc/zypp/repos.d/datadog.repo
     owner: "root"
     group: "root"
+    mode: 0644
   register: datadog_zypper_repo
 
 # refresh zypper repos only if the template changed
